@@ -69,7 +69,7 @@ infixr 8  **
 -- and 'exp' are customarily expected to define an exponential field and have
 -- the following properties:
 --
--- * @exp (a + b)@ = @exp a * exp b
+-- * @exp (a + b)@ = @exp a * exp b@
 -- * @exp (fromInteger 0)@ = @fromInteger 1@
 class  (Fractional a) => Floating a  where
     pi                  :: a
