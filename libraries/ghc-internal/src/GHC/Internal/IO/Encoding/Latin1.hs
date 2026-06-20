@@ -67,7 +67,8 @@ latin1_DF cfm =
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 latin1_EF :: CodingFailureMode -> IO (TextEncoder ())
@@ -77,7 +78,8 @@ latin1_EF cfm =
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 latin1_checked :: TextEncoding
@@ -96,7 +98,8 @@ latin1_checked_EF cfm =
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 -- -----------------------------------------------------------------------------
@@ -119,7 +122,8 @@ ascii_DF cfm =
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 ascii_EF :: CodingFailureMode -> IO (TextEncoder ())
@@ -129,7 +133,8 @@ ascii_EF cfm =
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 

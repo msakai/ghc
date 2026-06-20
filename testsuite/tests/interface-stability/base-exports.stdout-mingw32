@@ -7793,7 +7793,13 @@ module GHC.IO.Encoding where
   pattern BufferCodec {encode, recover, close, getState, setState}
   type role BufferCodec phantom phantom representational
   type BufferCodec :: * -> * -> * -> *
-  data BufferCodec from to state = BufferCodec# {encode# :: GHC.Internal.IO.Encoding.Types.CodeBuffer# from to, recover# :: GHC.Internal.IO.Buffer.Buffer from -> GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, GHC.Internal.IO.Buffer.Buffer from, GHC.Internal.IO.Buffer.Buffer to #), close# :: GHC.Internal.Types.IO (), getState# :: GHC.Internal.Types.IO state, setState# :: state -> GHC.Internal.Types.IO ()}
+  data BufferCodec from to state
+    = BufferCodec# {encode# :: GHC.Internal.IO.Encoding.Types.CodeBuffer# from to,
+                    recover# :: GHC.Internal.IO.Buffer.Buffer from -> GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, GHC.Internal.IO.Buffer.Buffer from, GHC.Internal.IO.Buffer.Buffer to #),
+                    close# :: GHC.Internal.Types.IO (),
+                    getState# :: GHC.Internal.Types.IO state,
+                    setState# :: state -> GHC.Internal.Types.IO (),
+                    finish# :: GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, CodingProgress, GHC.Internal.IO.Buffer.Buffer to #)}
   type CodingProgress :: *
   data CodingProgress = InputUnderflow | OutputUnderflow | InvalidSequence
   type TextDecoder :: * -> *
@@ -7885,7 +7891,13 @@ module GHC.IO.Encoding.Types where
   pattern BufferCodec {encode, recover, close, getState, setState}
   type role BufferCodec phantom phantom representational
   type BufferCodec :: * -> * -> * -> *
-  data BufferCodec from to state = BufferCodec# {encode# :: GHC.Internal.IO.Encoding.Types.CodeBuffer# from to, recover# :: GHC.Internal.IO.Buffer.Buffer from -> GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, GHC.Internal.IO.Buffer.Buffer from, GHC.Internal.IO.Buffer.Buffer to #), close# :: GHC.Internal.Types.IO (), getState# :: GHC.Internal.Types.IO state, setState# :: state -> GHC.Internal.Types.IO ()}
+  data BufferCodec from to state
+    = BufferCodec# {encode# :: GHC.Internal.IO.Encoding.Types.CodeBuffer# from to,
+                    recover# :: GHC.Internal.IO.Buffer.Buffer from -> GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, GHC.Internal.IO.Buffer.Buffer from, GHC.Internal.IO.Buffer.Buffer to #),
+                    close# :: GHC.Internal.Types.IO (),
+                    getState# :: GHC.Internal.Types.IO state,
+                    setState# :: state -> GHC.Internal.Types.IO (),
+                    finish# :: GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, CodingProgress, GHC.Internal.IO.Buffer.Buffer to #)}
   type CodeBuffer :: * -> * -> *
   type CodeBuffer from to = GHC.Internal.IO.Buffer.Buffer from -> GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Types.IO (CodingProgress, GHC.Internal.IO.Buffer.Buffer from, GHC.Internal.IO.Buffer.Buffer to)
   type CodingProgress :: *
@@ -8177,7 +8189,13 @@ module GHC.IO.Handle.Types where
   pattern BufferCodec {encode, recover, close, getState, setState}
   type role BufferCodec phantom phantom representational
   type BufferCodec :: * -> * -> * -> *
-  data BufferCodec from to state = BufferCodec# {encode# :: GHC.Internal.IO.Encoding.Types.CodeBuffer# from to, recover# :: GHC.Internal.IO.Buffer.Buffer from -> GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, GHC.Internal.IO.Buffer.Buffer from, GHC.Internal.IO.Buffer.Buffer to #), close# :: GHC.Internal.Types.IO (), getState# :: GHC.Internal.Types.IO state, setState# :: state -> GHC.Internal.Types.IO ()}
+  data BufferCodec from to state
+    = BufferCodec# {encode# :: GHC.Internal.IO.Encoding.Types.CodeBuffer# from to,
+                    recover# :: GHC.Internal.IO.Buffer.Buffer from -> GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, GHC.Internal.IO.Buffer.Buffer from, GHC.Internal.IO.Buffer.Buffer to #),
+                    close# :: GHC.Internal.Types.IO (),
+                    getState# :: GHC.Internal.Types.IO state,
+                    setState# :: state -> GHC.Internal.Types.IO (),
+                    finish# :: GHC.Internal.IO.Buffer.Buffer to -> GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld -> (# GHC.Internal.Prim.State# GHC.Internal.Prim.RealWorld, GHC.Internal.IO.Encoding.Types.CodingProgress, GHC.Internal.IO.Buffer.Buffer to #)}
   type role BufferList phantom
   type BufferList :: * -> *
   data BufferList e = BufferListNil | BufferListCons (GHC.Internal.IO.Buffer.RawBuffer e) (BufferList e)

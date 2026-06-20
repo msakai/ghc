@@ -1,0 +1,5 @@
+EUC-JISX0213: OK
+ISO-2022-JP: OK
+CP1255 (roundtrip): OK
+CP1258 (roundtrip): OK
+BIG5-HKSCS (roundtrip): OK

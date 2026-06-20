@@ -76,7 +76,8 @@ utf32_DF cfm = do
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = readIORef seen_bom,
-             setState# = writeIORef seen_bom
+             setState# = writeIORef seen_bom,
+             finish#   = noFinish#
           })
 
 utf32_EF :: CodingFailureMode -> IO (TextEncoder Bool)
@@ -87,7 +88,8 @@ utf32_EF cfm = do
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = readIORef done_bom,
-             setState# = writeIORef done_bom
+             setState# = writeIORef done_bom,
+             finish#   = noFinish#
           })
 
 utf32_encode :: IORef Bool -> EncodeBuffer#
@@ -166,7 +168,8 @@ utf32be_DF cfm =
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 utf32be_EF :: CodingFailureMode -> IO (TextEncoder ())
@@ -176,7 +179,8 @@ utf32be_EF cfm =
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 
@@ -196,7 +200,8 @@ utf32le_DF cfm =
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 utf32le_EF :: CodingFailureMode -> IO (TextEncoder ())
@@ -206,7 +211,8 @@ utf32le_EF cfm =
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 
