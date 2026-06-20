@@ -236,12 +236,25 @@ peekEncodedCString (TextEncoding { mkTextDecoder = mk_decoder }) (p, sz_bytes)
       !from0 <- fmap (\fp -> bufferAdd sz_bytes (emptyBuffer fp sz_bytes ReadBuffer)) $ newForeignPtr_ (castPtr p)
       !to    <- newCharBuffer chunk_size WriteBuffer
 
-      let go !iteration !from = do
+      let -- Input is exhausted: flush any character the decoder has buffered
+          -- internally (GNU libiconv / glibc precompose on decode and hold back
+          -- a base character), then read everything out. Without this the final
+          -- character of e.g. CP1255 / CP1258 / BIG5-HKSCS is lost, and round
+          -- tripping it (as charIsRepresentable does) wrongly reports the
+          -- encoding as unusable. (#15553)
+          drain !tobuf = do
+            (fwhy, tobuf') <- finishCodec decoder tobuf
+            chars <- withBuffer tobuf' $ peekArray (bufferElems tobuf')
+            case fwhy of
+              OutputUnderflow -> fmap (chars ++) (drain tobuf'{ bufL = 0, bufR = 0 })
+              _               -> return chars
+
+          go !iteration !from = do
             (why, from', !to') <- encode decoder from to
             if isEmptyBuffer from'
              then
               -- No input remaining: @why@ will be InputUnderflow, but we don't care
-              withBuffer to' $ peekArray (bufferElems to')
+              drain to'
              else do
               -- Input remaining: what went wrong?
               putDebugMsg ("peekEncodedCString: " ++ show iteration ++ " " ++ show why)
@@ -320,9 +333,17 @@ tryFillBuffer encoder null_terminate from0 to_p !to_sz_bytes = do
       (why, from', to') <- encode encoder from to
       putDebugMsg ("tryFillBufferAndCall: " ++ show iteration ++ " " ++ show why ++ " " ++ summaryBuffer from ++ " " ++ summaryBuffer from')
       if isEmptyBuffer from'
-       then if null_terminate && bufferAvailable to' == 0
-             then return Nothing -- We had enough for the string but not the terminator: ask the caller for more buffer
-             else return (Just to')
+       then do
+         -- All input consumed. Flush any output the encoder deferred: a
+         -- partially converted character (e.g. EUC-JISX0213) or a stateful
+         -- encoding's trailing reset sequence (e.g. ISO-2022-JP's ESC ( B).
+         -- Without this such trailing bytes are lost (#15553).
+         (fwhy, to'') <- finishCodec encoder to'
+         case fwhy of
+           OutputUnderflow -> return Nothing -- not enough room: ask the caller for more
+           _ | null_terminate && bufferAvailable to'' == 0
+                         -> return Nothing -- enough for the string but not the terminator
+             | otherwise -> return (Just to'')
        else case why of -- We didn't consume all of the input
               InputUnderflow  -> recover encoder from' to' >>= \(a,b) -> go (iteration + 1) a b -- These conditions are equally bad
               InvalidSequence -> recover encoder from' to' >>= \(a,b) -> go (iteration + 1) a b -- since the input was truncated/invalid

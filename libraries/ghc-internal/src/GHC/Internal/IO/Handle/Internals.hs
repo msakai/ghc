@@ -40,7 +40,7 @@ module GHC.Internal.IO.Handle.Internals (
   mkHandle,
   mkFileHandle, mkFileHandleNoFinalizer, mkDuplexHandle, mkDuplexHandleNoFinalizer,
   addHandleFinalizer,
-  openTextEncoding, closeTextCodecs, initBufferState,
+  openTextEncoding, closeTextCodecs, finishEncoder, initBufferState,
   dEFAULT_CHAR_BUFFER_SIZE,
 
   flushBuffer, flushWriteBuffer, flushCharReadBuffer,
@@ -64,7 +64,7 @@ module GHC.Internal.IO.Handle.Internals (
 import GHC.Internal.IO
 import GHC.Internal.IO.IOMode
 import GHC.Internal.IO.Encoding as Encoding
-import GHC.Internal.IO.Encoding.Types (CodeBuffer)
+import GHC.Internal.IO.Encoding.Types (CodeBuffer, finishCodec)
 import GHC.Internal.IO.Handle.Types
 import GHC.Internal.IO.Buffer
 import GHC.Internal.IO.BufferedIO (BufferedIO)
@@ -564,6 +564,37 @@ flushByteWriteBuffer h_@Handle__{..} = do
     debugIO ("flushByteWriteBuffer: bbuf=" ++ summaryBuffer bbuf')
     writeIORef haByteBuffer bbuf'
 
+-- | Flush the final state of the write Handle's encoder (if any) into the byte
+-- buffer, draining the byte buffer to the device whenever it fills up.  This
+-- emits any input the encoder has consumed but not yet fully translated, plus
+-- any trailing reset sequence a stateful encoding requires (see 'finishCodec'
+-- and #15553).
+--
+-- It must only be called when the encoder is about to be discarded — on close,
+-- or when the encoding is changed — because it resets the encoder's coding
+-- state, so no further 'writeCharBuffer' may follow without re-establishing it.
+-- The Char buffer is always empty between Handle operations (see
+-- [note Buffer Flushing], GHC.IO.Handle.Types), so there is no pending input on
+-- the Char side to encode here.
+finishEncoder :: Handle__ -> IO ()
+finishEncoder Handle__{..} =
+  case haEncoder of
+    Nothing  -> return ()
+    Just enc -> do
+      bbuf <- readIORef haByteBuffer
+      go enc bbuf
+  where
+    go enc bbuf = do
+      (progress, bbuf') <- finishCodec enc bbuf
+      debugIO ("finishEncoder: bbuf=" ++ summaryBuffer bbuf')
+      case progress of
+        -- Not enough room left in the byte buffer: drain it and continue.
+        OutputUnderflow -> do
+          bbuf'' <- Buffered.flushWriteBuffer haDevice bbuf'
+          go enc bbuf''
+        -- Nothing left to flush.
+        _               -> writeIORef haByteBuffer bbuf'
+
 -- write the contents of the CharBuffer to the Handle__.
 -- The data will be encoded and pushed to the byte buffer,
 -- flushing if the buffer becomes full.
@@ -905,12 +936,17 @@ hClose_help :: Handle__ -> IO (Handle__, Maybe SomeException)
 hClose_help handle_ =
   case haType handle_ of
       ClosedHandle -> return (handle_,Nothing)
-      _ -> do mb_exc1 <- trymaybe $ flushWriteBuffer handle_ -- interruptible
+      _ -> do mb_exc0 <- trymaybe $ finishEncoder handle_
+                    -- flush the encoder's final state (e.g. partially converted
+                    -- input, or a stateful encoding's trailing reset sequence)
+                    -- into the byte buffer before we flush and close (#15553).
+              mb_exc1 <- trymaybe $ flushWriteBuffer handle_ -- interruptible
                     -- it is important that hClose doesn't fail and
                     -- leave the Handle open (#3128), so we catch
                     -- exceptions when flushing the buffer.
               (h_, mb_exc2) <- hClose_handle_ handle_
-              return (h_, if isJust mb_exc1 then mb_exc1 else mb_exc2)
+              return (h_, if isJust mb_exc0 then mb_exc0
+                          else if isJust mb_exc1 then mb_exc1 else mb_exc2)
 
 
 trymaybe :: IO () -> IO (Maybe SomeException)
@@ -1010,15 +1046,22 @@ readTextDevice h_@Handle__{..} cbuf = do
   debugIO ("readTextDevice: cbuf=" ++ summaryBuffer cbuf ++
         " bbuf=" ++ summaryBuffer bbuf0)
 
-  bbuf1 <- if not (isEmptyBuffer bbuf0)
-              then return bbuf0
-              else do
-                   debugIO $ "readBuf at " ++ show (bufferOffset bbuf0)
-                   (r,bbuf1) <- Buffered.fillReadBuffer haDevice bbuf0
-                   debugIO $ "readBuf after " ++ show (bufferOffset bbuf1)
-                   if r == 0 then ioe_EOF else do  -- raise EOF
-                   return bbuf1
+  if not (isEmptyBuffer bbuf0)
+     then decodeRead h_ bbuf0 cbuf
+     else do
+       debugIO $ "readBuf at " ++ show (bufferOffset bbuf0)
+       (r,bbuf1) <- Buffered.fillReadBuffer haDevice bbuf0
+       debugIO $ "readBuf after " ++ show (bufferOffset bbuf1)
+       if r == 0
+          -- EOF: flush a character the decoder may have buffered, else raise EOF.
+          then finishReadTextDevice h_ cbuf
+          else decodeRead h_ bbuf1 cbuf
 
+-- | Decode the bytes in @bbuf1@ into @cbuf@.  If that produced no new character
+-- (an incomplete multibyte sequence at the end of @bbuf1@), read more bytes via
+-- 'readTextDevice''.
+decodeRead :: Handle__ -> Buffer Word8 -> CharBuffer -> IO CharBuffer
+decodeRead h_@Handle__{..} bbuf1 cbuf = do
   debugIO ("readTextDevice after reading: bbuf=" ++ summaryBuffer bbuf1)
 
   (bbuf2,cbuf') <-
@@ -1043,6 +1086,25 @@ readTextDevice h_@Handle__{..} cbuf = do
      then readTextDevice' h_ bbuf2 cbuf
      else return cbuf'
 
+-- | The input device is at EOF. Some decoders (GNU libiconv and glibc, which
+-- precompose on decode) buffer a character internally that has not been emitted
+-- yet — a base letter held back to see whether a combining mark follows
+-- (e.g. CP1255, CP1258), or the second code point of a 1->2 expansion
+-- (e.g. BIG5-HKSCS). @recover@ cannot help here: there are no leftover input
+-- bytes, the character is buffered inside the codec. Flush it before signalling
+-- EOF so it is not lost (#15553). With nothing buffered — the common case, and
+-- always for the native UTF-8\/16\/32 and Latin1 codecs — this raises EOF.
+finishReadTextDevice :: Handle__ -> CharBuffer -> IO CharBuffer
+finishReadTextDevice Handle__{..} cbuf =
+  case haDecoder of
+    Nothing      -> ioe_EOF
+    Just decoder -> do
+      (_why, cbuf') <- finishCodec decoder cbuf
+      debugIO ("finishReadTextDevice: cbuf=" ++ summaryBuffer cbuf')
+      if bufR cbuf' > bufR cbuf
+         then return cbuf'
+         else ioe_EOF
+
 -- we have an incomplete byte sequence at the end of the buffer: try to
 -- read more bytes.
 readTextDevice' :: Handle__ -> Buffer Word8 -> CharBuffer -> IO CharBuffer
@@ -1061,7 +1123,8 @@ readTextDevice' h_@Handle__{..} bbuf0 cbuf0 = do
    then do
      -- bbuf2 can be empty here when we encounter an invalid byte sequence at the end of the input
      -- with a //IGNORE codec which consumes bytes without outputting characters
-     if isEmptyBuffer bbuf2 then ioe_EOF else do
+     -- (or when the decoder has buffered a character internally — see #15553).
+     if isEmptyBuffer bbuf2 then do { writeIORef haByteBuffer bbuf2; finishReadTextDevice h_ cbuf0 } else do
      (bbuf3, cbuf1) <- recover decoder bbuf2 cbuf0
      debugIO ("readTextDevice' after recovery: bbuf=" ++ summaryBuffer bbuf3 ++ ", cbuf=" ++ summaryBuffer cbuf1)
      writeIORef haByteBuffer bbuf3
@@ -1097,12 +1160,15 @@ readTextDeviceNonBlocking :: Handle__ -> CharBuffer -> IO CharBuffer
 readTextDeviceNonBlocking h_@Handle__{..} cbuf = do
   --
   bbuf0 <- readIORef haByteBuffer
-  when (isEmptyBuffer bbuf0) $ do
-     (r,bbuf1) <- Buffered.fillReadBuffer0 haDevice bbuf0
-     if isNothing r then ioe_EOF else do  -- raise EOF
-     writeIORef haByteBuffer bbuf1
-
-  decodeByteBuf h_ cbuf
+  if not (isEmptyBuffer bbuf0)
+     then decodeByteBuf h_ cbuf
+     else do
+       (r,bbuf1) <- Buffered.fillReadBuffer0 haDevice bbuf0
+       if isNothing r
+          -- EOF: flush a character the decoder may have buffered, else raise EOF.
+          then finishReadTextDevice h_ cbuf
+          else do writeIORef haByteBuffer bbuf1
+                  decodeByteBuf h_ cbuf
 
 -- Decode bytes from the byte buffer into the supplied CharBuffer.
 decodeByteBuf :: Handle__ -> CharBuffer -> IO CharBuffer

@@ -69,7 +69,8 @@ utf8_DF cfm =
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 utf8_EF :: CodingFailureMode -> IO (TextEncoder ())
@@ -79,7 +80,8 @@ utf8_EF cfm =
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 utf8_bom :: TextEncoding
@@ -98,7 +100,8 @@ utf8_bom_DF cfm = do
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = readIORef ref,
-             setState# = writeIORef ref
+             setState# = writeIORef ref,
+             finish#   = noFinish#
           })
 
 utf8_bom_EF :: CodingFailureMode -> IO (TextEncoder Bool)
@@ -109,7 +112,8 @@ utf8_bom_EF cfm = do
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = readIORef ref,
-             setState# = writeIORef ref
+             setState# = writeIORef ref,
+             finish#   = noFinish#
           })
 
 utf8_bom_decode :: IORef Bool -> DecodeBuffer#

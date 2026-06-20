@@ -124,9 +124,11 @@ mkIconvEncoding cfm charset = do
     let enc = TextEncoding {
                   textEncodingName = charset,
                   mkTextDecoder = newIConv raw_charset (haskellChar ++ suffix)
-                                           (recoverDecode cfm) iconvDecode,
+                                           (recoverDecode cfm) iconvDecode
+                                           (\t -> iconvFlush t char_shift),
                   mkTextEncoder = newIConv haskellChar charset
-                                           (recoverEncode cfm) iconvEncode}
+                                           (recoverEncode cfm) iconvEncode
+                                           (\t -> iconvFlush t 0)}
     good <- charIsRepresentable enc 'a'
     return $ if good
                then Just enc
@@ -139,8 +141,9 @@ mkIconvEncoding cfm charset = do
 newIConv :: String -> String
    -> (Buffer a -> Buffer b -> IO (Buffer a, Buffer b))
    -> (IConv -> Buffer a -> Buffer b -> IO (CodingProgress, Buffer a, Buffer b))
+   -> (IConv -> Buffer b -> IO (CodingProgress, Buffer b))
    -> IO (BufferCodec a b ())
-newIConv from to rec fn =
+newIConv from to rec fn fin =
   -- Assume charset names are ASCII
   withCAString from $ \ from_str ->
   withCAString to   $ \ to_str -> do
@@ -148,13 +151,16 @@ newIConv from to rec fn =
     let iclose = throwErrnoIfMinus1_ "Iconv.close" $ hs_iconv_close iconvt
         fn_iconvt ibuf obuf st = case unIO (fn iconvt ibuf obuf) st of
           (# st', (prog, ibuf', obuf') #) -> (# st', prog, ibuf', obuf' #)
+        fin_iconvt obuf st = case unIO (fin iconvt obuf) st of
+          (# st', (prog, obuf') #) -> (# st', prog, obuf' #)
     return BufferCodec# {
                 encode#   = fn_iconvt,
                 recover#  = rec#,
                 close#    = iclose,
                 -- iconv doesn't supply a way to save/restore the state
                 getState# = return (),
-                setState# = const $ return ()
+                setState# = const $ return (),
+                finish#   = fin_iconvt
                 }
   where
     rec# ibuf obuf st = case unIO (rec ibuf obuf) st of
@@ -165,6 +171,59 @@ iconvDecode iconv_t ibuf obuf = iconvRecode iconv_t ibuf 0 obuf char_shift
 
 iconvEncode :: IConv -> Buffer Char -> Buffer Word8 -> IO (CodingProgress, Buffer Char, Buffer Word8)
 iconvEncode iconv_t ibuf obuf = iconvRecode iconv_t ibuf char_shift obuf 0
+
+-- | Flush iconv's internal state at the end of a series of conversions, writing
+-- any pending output into the @output@ buffer.  @oscale@ is the log2 of the
+-- output element size in bytes (0 for the 'Word8' output of 'iconvEncode',
+-- 'char_shift' for the @Char@ output of 'iconvDecode').
+--
+-- Note [Flushing iconv state]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-- iconv may consume input without producing all of the corresponding output,
+-- because the output depends on input that has not been seen yet.  This happens
+-- in BOTH directions:
+--
+--  * Encoding (Unicode -> bytes): when encoding to EUC-JISX0213, U+3051 may
+--    stand alone (@0xa4 0xb1@) or combine with a following U+309A (@0xa4 0xfa@),
+--    so iconv defers the output. Stateful encodings such as ISO-2022-JP must
+--    also emit a reset escape sequence (@ESC ( B@) at the end of the stream.
+--
+--  * Decoding (bytes -> Unicode): GNU libiconv and glibc precompose on decode,
+--    so they hold back a base character until they know whether a combining
+--    mark follows (e.g. CP1255 Hebrew, CP1258/TCVN Latin — even a lone trailing
+--    @0x41@ \'A\' in CP1258), and they hold back the second code point of a
+--    one-byte-sequence-to-two-code-points expansion (e.g. BIG5-HKSCS). The held
+--    character is only emitted by the flush, not by @recover@ (there are no
+--    leftover input bytes to recover from).
+--
+-- iconv(3) provides for this: the last call in a series should be one with a
+-- NULL input pointer, in order to flush out any partially converted input.
+-- This both writes out the deferred output and resets the conversion state.
+-- Without it, that trailing output is silently lost (#15553).
+iconvFlush :: IConv -> Int -> Buffer b -> IO (CodingProgress, Buffer b)
+iconvFlush iconv_t oscale
+  output@Buffer{ bufRaw=oraw, bufR=ow, bufSize=os }
+  = do
+    iconv_trace ("iconvFlush before, output=" ++ show (summaryBuffer output))
+    withRawBuffer oraw $ \ poraw -> do
+    with (poraw `plusPtr` (ow `shiftL` oscale)) $ \ p_outbuf -> do
+    with (fromIntegral ((os-ow) `shiftL` oscale)) $ \ p_outleft -> do
+      -- A NULL input pointer tells iconv to flush and reset its state.
+      res <- hs_iconv iconv_t nullPtr nullPtr p_outbuf p_outleft
+      new_outleft <- peek p_outleft
+      let new_outleft' = fromIntegral new_outleft `shiftR` oscale
+          new_output   = output{ bufR = os - new_outleft' }
+      iconv_trace ("iconvFlush after,  output=" ++ show (summaryBuffer new_output))
+      if (res /= -1)
+        then -- all pending output flushed
+           return (InputUnderflow, new_output)
+        else do
+      errno <- getErrno
+      case errno of
+        e | e == e2BIG -> return (OutputUnderflow, new_output)
+          | otherwise  -> do
+              iconv_trace ("iconvFlush returned error: " ++ show (errnoToIOError "iconv" e Nothing Nothing))
+              throwErrno "iconvFlush"
 
 iconvRecode :: IConv -> Buffer a -> Int -> Buffer b -> Int
             -> IO (CodingProgress, Buffer a, Buffer b)
