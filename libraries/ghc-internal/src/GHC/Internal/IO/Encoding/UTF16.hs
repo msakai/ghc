@@ -78,7 +78,8 @@ utf16_DF cfm = do
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = readIORef seen_bom,
-             setState# = writeIORef seen_bom
+             setState# = writeIORef seen_bom,
+             finish#   = noFinish#
           })
 
 utf16_EF :: CodingFailureMode -> IO (TextEncoder Bool)
@@ -89,7 +90,8 @@ utf16_EF cfm = do
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = readIORef done_bom,
-             setState# = writeIORef done_bom
+             setState# = writeIORef done_bom,
+             finish#   = noFinish#
           })
 
 utf16_encode :: IORef Bool -> EncodeBuffer#
@@ -165,7 +167,8 @@ utf16be_DF cfm =
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 utf16be_EF :: CodingFailureMode -> IO (TextEncoder ())
@@ -175,7 +178,8 @@ utf16be_EF cfm =
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 utf16le :: TextEncoding
@@ -194,7 +198,8 @@ utf16le_DF cfm =
              recover#  = recoverDecode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 utf16le_EF :: CodingFailureMode -> IO (TextEncoder ())
@@ -204,7 +209,8 @@ utf16le_EF cfm =
              recover#  = recoverEncode# cfm,
              close#    = return (),
              getState# = return (),
-             setState# = const $ return ()
+             setState# = const $ return (),
+             finish#   = noFinish#
           })
 
 

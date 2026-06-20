@@ -5,6 +5,7 @@
   * Add `Data.List.NonEmpty.{zip{3..7},zipWith{3..7},unzip{3..7}}` ([CLC proposal #409)(https://github.com/haskell/core-libraries-committee/issues/409))
   * Ensure that `Data.List.elem` and `notElem` can be specialized even when no list fusion happens. ([CLC proposal #412)(https://github.com/haskell/core-libraries-committee/issues/412))
   * Introduce `Data.Double` and `Data.Float` modules. ([CLC proposal #378](https://github.com/haskell/core-libraries-committee/issues/378))
+  * Flush partially converted input at the end of the stream when encoding text, fixing incomplete output for some iconv-based encodings such as `EUC-JISX0213` and `ISO-2022-JP`. The internal `GHC.IO.Encoding.Types.BufferCodec` record gains a `finish#` field. (#15553)
 
 ## 4.23.0.0 *TBA*
   * Add `System.IO.hGetNewlineMode`. ([CLC proposal #370](https://github.com/haskell/core-libraries-committee/issues/370))

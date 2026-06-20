@@ -261,6 +261,7 @@ hSetEncoding :: Handle -> TextEncoding -> IO ()
 hSetEncoding hdl encoding =
   withAllHandles__ "hSetEncoding" hdl $ \h_@Handle__{..} -> do
     flushCharBuffer h_
+    finishEncoder h_   -- flush the old encoder's final state before discarding it (#15553)
     closeTextCodecs h_
     openTextEncoding (Just encoding) haType $ \ mb_encoder mb_decoder -> do
     bbuf <- readIORef haByteBuffer
@@ -617,6 +618,7 @@ hSetBinaryMode handle bin =
   withAllHandles__ "hSetBinaryMode" handle $ \ h_@Handle__{..} ->
     do
          flushCharBuffer h_
+         finishEncoder h_   -- flush the old encoder's final state before discarding it (#15553)
          closeTextCodecs h_
 
          mb_te <- if bin then return Nothing

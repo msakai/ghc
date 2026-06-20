@@ -153,6 +153,12 @@ test('encoding004',
      ], compile_and_run, [''])
 test('encoding005', normal, compile_and_run, [''])
 
+# Regression test for #15553: the encoder must flush partially converted input
+# and reset stateful encodings at the end of the stream. The test self-skips
+# (printing "OK") for any encoding iconv does not support, so it is safe on all
+# platforms.
+test('T15553', normal, compile_and_run, [''])
+
 test('environment001', [], makefile_test, ['environment001-test'])
 
 test('newline001', [], compile_and_run, [''])

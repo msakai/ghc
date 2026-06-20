@@ -40,7 +40,7 @@ module GHC.Internal.IO.Handle.Internals (
   mkHandle,
   mkFileHandle, mkFileHandleNoFinalizer, mkDuplexHandle, mkDuplexHandleNoFinalizer,
   addHandleFinalizer,
-  openTextEncoding, closeTextCodecs, initBufferState,
+  openTextEncoding, closeTextCodecs, finishEncoder, initBufferState,
   dEFAULT_CHAR_BUFFER_SIZE,
 
   flushBuffer, flushWriteBuffer, flushCharReadBuffer,
@@ -64,7 +64,7 @@ module GHC.Internal.IO.Handle.Internals (
 import GHC.Internal.IO
 import GHC.Internal.IO.IOMode
 import GHC.Internal.IO.Encoding as Encoding
-import GHC.Internal.IO.Encoding.Types (CodeBuffer)
+import GHC.Internal.IO.Encoding.Types (CodeBuffer, finishEncode)
 import GHC.Internal.IO.Handle.Types
 import GHC.Internal.IO.Buffer
 import GHC.Internal.IO.BufferedIO (BufferedIO)
@@ -564,6 +564,37 @@ flushByteWriteBuffer h_@Handle__{..} = do
     debugIO ("flushByteWriteBuffer: bbuf=" ++ summaryBuffer bbuf')
     writeIORef haByteBuffer bbuf'
 
+-- | Flush the final state of the write Handle's encoder (if any) into the byte
+-- buffer, draining the byte buffer to the device whenever it fills up.  This
+-- emits any input the encoder has consumed but not yet fully translated, plus
+-- any trailing reset sequence a stateful encoding requires (see 'finishEncode'
+-- and #15553).
+--
+-- It must only be called when the encoder is about to be discarded — on close,
+-- or when the encoding is changed — because it resets the encoder's coding
+-- state, so no further 'writeCharBuffer' may follow without re-establishing it.
+-- The Char buffer is always empty between Handle operations (see
+-- [note Buffer Flushing], GHC.IO.Handle.Types), so there is no pending input on
+-- the Char side to encode here.
+finishEncoder :: Handle__ -> IO ()
+finishEncoder Handle__{..} =
+  case haEncoder of
+    Nothing  -> return ()
+    Just enc -> do
+      bbuf <- readIORef haByteBuffer
+      go enc bbuf
+  where
+    go enc bbuf = do
+      (progress, bbuf') <- finishEncode enc bbuf
+      debugIO ("finishEncoder: bbuf=" ++ summaryBuffer bbuf')
+      case progress of
+        -- Not enough room left in the byte buffer: drain it and continue.
+        OutputUnderflow -> do
+          bbuf'' <- Buffered.flushWriteBuffer haDevice bbuf'
+          go enc bbuf''
+        -- Nothing left to flush.
+        _               -> writeIORef haByteBuffer bbuf'
+
 -- write the contents of the CharBuffer to the Handle__.
 -- The data will be encoded and pushed to the byte buffer,
 -- flushing if the buffer becomes full.
@@ -905,12 +936,17 @@ hClose_help :: Handle__ -> IO (Handle__, Maybe SomeException)
 hClose_help handle_ =
   case haType handle_ of
       ClosedHandle -> return (handle_,Nothing)
-      _ -> do mb_exc1 <- trymaybe $ flushWriteBuffer handle_ -- interruptible
+      _ -> do mb_exc0 <- trymaybe $ finishEncoder handle_
+                    -- flush the encoder's final state (e.g. partially converted
+                    -- input, or a stateful encoding's trailing reset sequence)
+                    -- into the byte buffer before we flush and close (#15553).
+              mb_exc1 <- trymaybe $ flushWriteBuffer handle_ -- interruptible
                     -- it is important that hClose doesn't fail and
                     -- leave the Handle open (#3128), so we catch
                     -- exceptions when flushing the buffer.
               (h_, mb_exc2) <- hClose_handle_ handle_
-              return (h_, if isJust mb_exc1 then mb_exc1 else mb_exc2)
+              return (h_, if isJust mb_exc0 then mb_exc0
+                          else if isJust mb_exc1 then mb_exc1 else mb_exc2)
 
 
 trymaybe :: IO () -> IO (Maybe SomeException)

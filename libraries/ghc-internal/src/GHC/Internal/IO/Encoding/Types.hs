@@ -21,6 +21,7 @@
 
 module GHC.Internal.IO.Encoding.Types (
     BufferCodec(.., BufferCodec, encode, recover, close, getState, setState),
+    finishEncode, noFinish#,
     TextEncoding(..),
     TextEncoder, TextDecoder,
     CodeBuffer, EncodeBuffer, DecodeBuffer,
@@ -95,9 +96,37 @@ data BufferCodec from to state = BufferCodec# {
    -- beginning), and if not, whether to use the big or little-endian
    -- encoding.
 
-  setState# :: state -> IO ()
+  setState# :: state -> IO (),
    -- restore the state of the codec using the state from a previous
    -- call to 'getState'.
+
+  finish# :: Buffer to -> State# RealWorld -> (# State# RealWorld, CodingProgress, Buffer to #)
+   -- ^ The @finish@ function is called once at the very end of a series of
+   -- @encode@ calls, when there is no more input.  It flushes any input that
+   -- the codec has consumed but not yet fully translated, and resets any
+   -- internal coding state back to its initial value, writing the resulting
+   -- elements to the @to@ buffer.
+   --
+   -- This matters for codecs that defer output until they have seen more
+   -- input (e.g. iconv\'s EUC-JISX0213, where the character U+3051 might be
+   -- the start of the two-character sequence U+3051 U+309A), and for stateful
+   -- output encodings that must emit a trailing reset sequence (e.g. the
+   -- @ESC ( B@ that ISO-2022-JP requires at the end of the stream). Without
+   -- @finish@, that trailing output would be silently lost (#15553).
+   --
+   -- Like @encode@, @finish@ returns 'OutputUnderflow' if the @to@ buffer is
+   -- too small to hold all of the flushed output; the caller is then expected
+   -- to drain the buffer and call @finish@ again. It returns 'InputUnderflow'
+   -- once there is nothing left to flush.
+   --
+   -- This is only meaningful for encoders; decoders and stateless codecs use
+   -- the no-op 'noFinish#'.  It is only ever invoked when the codec is about
+   -- to be discarded (on 'GHC.Internal.IO.Handle.hClose',
+   -- 'GHC.Internal.IO.Handle.hSetEncoding' or
+   -- 'GHC.Internal.IO.Handle.hSetBinaryMode'), so no further @encode@ calls
+   -- follow it.
+   --
+   -- @since base-4.24.0.0
  }
 
 type CodeBuffer      from to = Buffer from -> Buffer to -> IO (CodingProgress, Buffer from, Buffer to)
@@ -156,9 +185,21 @@ pattern BufferCodec :: CodeBuffer from to
                     -> (state -> IO ())
                     -> BufferCodec from to state
 pattern BufferCodec{encode, recover, close, getState, setState} <-
-    BufferCodec# (getEncode -> encode) (getRecover -> recover) close getState setState
+    BufferCodec# (getEncode -> encode) (getRecover -> recover) close getState setState _
   where
-    BufferCodec e r c g s = BufferCodec# (mkEncode e) (mkRecover r) c g s
+    BufferCodec e r c g s = BufferCodec# (mkEncode e) (mkRecover r) c g s noFinish#
+
+-- | A 'finish#' implementation for codecs that have no partially-translated
+-- input to flush at the end of the stream (decoders and stateless encoders).
+-- It writes nothing and immediately reports 'InputUnderflow'.
+noFinish# :: Buffer to -> State# RealWorld -> (# State# RealWorld, CodingProgress, Buffer to #)
+noFinish# to st = (# st, InputUnderflow, to #)
+
+-- | Run a codec's 'finish#' in 'IO': flush any partially-translated input and
+-- reset the codec's state, writing the result to the @to@ buffer. See 'finish#'.
+finishEncode :: BufferCodec from to state -> Buffer to -> IO (CodingProgress, Buffer to)
+finishEncode codec to = IO $ \st ->
+  case finish# codec to st of (# st', prog, to' #) -> (# st', (prog, to') #)
 
 getEncode :: CodeBuffer# from to -> CodeBuffer from to
 getEncode e i o = IO $ \st ->
